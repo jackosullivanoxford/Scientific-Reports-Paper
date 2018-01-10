@@ -1,0 +1,264 @@
+
+library(ggplot2)
+library(arm)
+library(dplyr)
+
+######################################################################################################################################################
+#########################################------------------Read in Data------------###################################################################
+######################################################################################################################################################
+
+esr<-read.csv("Data_esr.csv")
+
+crp24<-read.csv("Data_CRP.csv")
+
+######################################################################################################################################################
+############################------------------Raw proportion positive per practice------------###################################################################
+######################################################################################################################################################
+
+#############################################-----------------CRP----------------------########################################################################
+
+crp_total <-  crp24 %>%
+  group_by(loc, Practice) %>%
+  summarise(total = sum(total))
+
+n_positive<- crp24 %>%
+  group_by(loc) %>%
+  summarise(n_positive = sum(n_positive))
+
+crp_total$n_positive<-n_positive$n_positive
+
+#Create raw proportion positive
+crp_total$proportion<-((crp_total$n_positive)/(crp_total$total))
+
+#############################################-----------------ESR----------------------########################################################################
+
+esr_total <- esr %>%
+  group_by(loc) %>%
+  summarise(total = sum(total))
+
+n_pos <- esr %>%
+  group_by(loc) %>%
+  summarise(n_pos = sum(n_positive))
+
+esr_total$n_pos <- n_pos$n_pos
+
+#Create raw proportion positive
+esr_total$proportion<-((esr_total$n_pos)/(esr_total$total))
+
+######################################################################################################################################################
+##############################--------------------Statistical Models---------------###################################################################
+######################################################################################################################################################
+
+#############################################-----------------CRP----------------------########################################################################
+#Model with IMD only (original model)
+mod2 <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + (1|Practice),
+              family = binomial, data = crp24)
+
+###---Adding in age---###
+##--Male--##
+#Generate Total males per practice
+crp24 <- mutate(crp24, crp_m_sum = Male.0.4 + Male.5.14 + Male.25.34 + Male.35.44 + Male.45.54 + Male.55.64 + Male.65.74 + Male.75.)
+
+#Generate proportion of males per age group per practice
+crp24 <- mutate(crp24, crp_0_4_m = (Male.0.4/crp_m_sum),
+                crp_5_14_m = (Male.5.14/crp_m_sum),
+                crp_25_34_m = (Male.25.34/crp_m_sum),
+                crp_35_44_m = (Male.35.44/crp_m_sum),
+                crp_45_54_m = (Male.45.54/crp_m_sum),
+                crp_55_64_m = (Male.55.64/crp_m_sum),
+                crp_65_74_m = (Male.65.74/crp_m_sum),
+                crp_75_m = (Male.75./crp_m_sum))
+
+#Generate proportion of males >65
+crp24 <- mutate(crp24, crp_65_m = ((Male.65.74 + Male.75.)/crp_m_sum))
+
+#Model with ages (male over 65) 
+crp_mod_65_m <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + crp_65_m + (1|id),
+                      family = binomial, data = crp24)
+
+#Compare model fit: original vs. male_>65
+anova(mod2, crp_mod_65_m) 
+
+##--Female--##
+#Generate total females per practice
+crp24 <- mutate(crp24, crp_f_sum = Female.0.4 + Female.5.14 + Female.25.34 + Female.35.44 + Female.45.54 + Female.55.64 + Female.65.74 + Female.75.)
+
+#Generate proportion of females per age group per practice
+crp24 <- mutate(crp24, crp_0_4_f = (Female.0.4/crp_f_sum)*100,
+                crp_5_14_f = (Female.5.14/crp_f_sum)*100,
+                crp_25_34_f = (Female.25.34/crp_f_sum)*100,
+                crp_35_44_f = (Female.35.44/crp_f_sum)*100,
+                crp_45_54_f = (Female.45.54/crp_f_sum)*100,
+                crp_55_64_f = (Female.55.64/crp_f_sum)*100,
+                crp_65_74_f = (Female.65.74/crp_f_sum)*100,
+                crp_75_f = (Female.75./crp_f_sum)*100)
+
+#Generate proportion of females >65
+crp24 <- mutate(crp24, crp_65_f = ((Female.65.74 + Female.75.)/crp_f_sum))
+
+#Model with ages (female over 65) 
+crp_mod_65_f <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + crp_65_f + (1|id),
+                      family = binomial, data = crp24)
+
+#Compare model fit: original vs. female_65
+anova(mod2, crp_mod_65_f) 
+
+#Model with both genders with proportion >65
+crp_mod_65_both <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + crp_65_f + crp_65_m + (1|id),
+                         family = binomial, data = crp24, control=glmerControl(optimizer="bobyqa",
+                                                                               optCtrl=list(maxfun=100000)))
+
+#Compare model fit
+anova(mod2, crp_mod_65_both) 
+
+###########------------Investigating effects of repeat testing-----------###########
+crp_mod_repeat <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + pro + (1|id),
+                        family = binomial, data = crp24, control=glmerControl(optimizer="bobyqa",
+                                                                              optCtrl=list(maxfun=100000)))
+
+anova(mod2, crp_mod_repeat) 
+
+###########------------Investigating effects of Gender-----------###########
+#Proportion of lists that is female for each practice 
+crp24 <- mutate(crp24, pro_f = crp_f_sum/(crp_f_sum+crp_m_sum))
+
+#Model with proportion female
+crp_mod_pro_f <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + pro_f + (1|id),
+                       family = binomial, data = crp24, control=glmerControl(optimizer="bobyqa",
+                                                                             optCtrl=list(maxfun=100000)))
+
+anova(mod2, crp_mod_pro_f) 
+
+
+###########------------Model with IMD, age and repeat testing-----------###########
+crp_mod_repeat_age <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + crp_65_f + crp_65_m + pro + (1|id),
+                            family = binomial, data = crp24, control=glmerControl(optimizer="bobyqa",
+                                                                                  optCtrl=list(maxfun=100000)))
+
+anova(mod2, crp_mod_repeat_age) 
+
+#############################################-----------------ESR----------------------########################################################################
+###########------------Adding age-----------###########
+##--Male--##
+#Generate Total males per practice
+esr <- mutate(esr, esr_m_sum = Male.0.4 + Male.5.14 + Male.25.34 + Male.35.44 + Male.45.54 + Male.55.64 + Male.65.74 + Male.75.)
+
+#Generate proportion of males per age group per practice
+esr <- mutate(esr, esr_0_4_m = (Male.0.4/esr_m_sum),
+              esr_5_14_m = (Male.5.14/esr_m_sum),
+              esr_25_34_m = (Male.25.34/esr_m_sum),
+              esr_35_44_m = (Male.35.44/esr_m_sum),
+              esr_45_54_m = (Male.45.54/esr_m_sum),
+              esr_55_64_m = (Male.55.64/esr_m_sum),
+              esr_65_74_m = (Male.65.74/esr_m_sum),
+              esr_75_m = (Male.75./esr_m_sum))
+
+#Generate proportion of males >65
+esr <- mutate(esr, esr_65_m = ((Male.65.74 + Male.75.)/esr_m_sum))
+
+##--Female--##
+#Generate total females per practice
+esr <- mutate(esr, esr_f_sum = Female.0.4 + Female.5.14 + Female.25.34 + Female.35.44 + Female.45.54 + Female.55.64 + Female.65.74 + Female.75.)
+
+#Generate proportion of females per age group per practice
+esr <- mutate(esr, esr_0_4_f = (Female.0.4/esr_f_sum)*100,
+              esr_5_14_f = (Female.5.14/esr_f_sum)*100,
+              esr_25_34_f = (Female.25.34/esr_f_sum)*100,
+              esr_35_44_f = (Female.35.44/esr_f_sum)*100,
+              esr_45_54_f = (Female.45.54/esr_f_sum)*100,
+              esr_55_64_f = (Female.55.64/esr_f_sum)*100,
+              esr_65_74_f = (Female.65.74/esr_f_sum)*100,
+              esr_75_f = (Female.75./esr_f_sum)*100)
+
+#Generate proportion of females >65
+esr <- mutate(esr, esr_65_f = ((Female.65.74 + Female.75.)/esr_f_sum))
+
+
+###########------------Model with IMD, age and repeat testing-----------###########
+esr_mod_repeat_age <- glmer(cbind(n_positive,total-n_positive) ~ as.factor(IMD) + esr_65_f + esr_65_m + pro + (1|id),
+                            family = binomial, data = esr, control=glmerControl(optimizer="bobyqa",
+                                                                                optCtrl=list(maxfun=100000)))
+
+######################################################################################################################################################
+##############################--------------------Plotting---------------###################################################################
+######################################################################################################################################################
+
+#############################################-----------------CRP----------------------########################################################################
+
+summary(crp_mod_repeat_age)
+
+#Fixed and random effects
+coefs_crp <- fixef(crp_mod_repeat_age)
+rfs_crp <- ranef(crp_mod_repeat_age)
+
+#dF with GP practice location and fitted proportion positive estimates
+crpplot2 <- data.frame(loc = crp24$loc, fitted  = fitted(crp_mod_repeat_age))
+
+#Mean fitted proportion per practice
+fit_crp <- group_by(crpplot2,loc) %>% summarise(fit = mean(fitted))
+
+#dF with fitted proportions, raw proportions and total crp tests per practice
+d_crp <- data.frame(fit_crp, obs = crp_total$proportion, total = crp_total$total)
+
+#Control limits for plot using mean of average fitted proportion
+number.seq_crp <- seq(1,max(d_crp$total),1)
+p_crp <- mean(d_crp$fit)
+se_crp <- sqrt((p_crp*(1-p_crp))/number.seq_crp)
+number.ll95_crp <- p_crp - 1.96 * se_crp
+number.ul95_crp <- p_crp + 1.96 * se_crp 
+number.ll99.9_crp <- p_crp - 3.29 * se_crp
+number.ul99.9_crp <- p_crp + 3.29 * se_crp
+
+#Figure 3a Plot adjusted proportion abnormal 
+plot(d_crp$total,d_crp$fit, pch = 16, ylim = c(0,0.6), col = "purple",
+     main = "Proportion abnormal CRP tests \nper General Practice", 
+     xlab = "Total number of CRP tests ordered", ylab = "Proportion abnormal CRP tests")
+abline(b=0, h=p_crp) #add in mean line
+lines(number.seq_crp,number.ll95_crp,lty = 2, col = "red")
+lines(number.seq_crp,number.ul95_crp,lty = 2, col = "red")
+lines(number.seq_crp,number.ll99.9_crp,lty = 2, col = "blue")
+lines(number.seq_crp,number.ul99.9_crp,lty = 2, col = "blue")
+legend(3000, 0.1, c("Adjusted proportions per practice"), pch = 16, col = "purple", cex = 0.8, bty = "n")
+legend(3000, 0.6, c("99.8% limit"), lty = 2, col = "blue", cex = 0.8, bty = "n")
+legend(3000, 0.57, c("95% limit"), lty = 2, col = "red", cex = 0.8, bty = "n")
+legend(3000, 0.54, c("Mean"), lty = 1, cex = 0.8, bty = "n")
+
+
+#############################################-----------------ESR----------------------########################################################################
+summary(esr_mod_repeat_age)
+
+#Fixed and random effects
+coefs_esr <- fixef(esr_mod_repeat_age)
+rfs_esr <- ranef(esr_mod_repeat_age)
+
+#dF with GP practice location and fitted proportion positive estimates
+esrplot <- data.frame(loc = esr$loc, fitted  = fitted(esr_mod_repeat_age))
+
+#Mean fitted proportion per practice
+fit_esr <- group_by(esrplot,loc) %>% summarise(fit = mean(fitted))
+
+#dF with fitted proportions, raw proportions and total crp tests per practice
+d_esr <- data.frame(fit_esr, obs = esr_total$proportion, total = esr_total$total)
+
+#Control limits for plot using mean of average fitted proportion
+number.seq_esr <- seq(1,max(d_esr$total),1)
+p_esr <- mean(d_esr$fit)
+se_esr <- sqrt((p_esr*(1-p_esr))/number.seq_esr)
+number.ll95_esr <- p_esr - 1.96 * se_esr
+number.ul95_esr <- p_esr + 1.96 * se_esr 
+number.ll99.9_esr <- p_esr - 3.29 * se_esr
+number.ul99.9_esr <- p_esr + 3.29 * se_esr
+
+#Figure 3b Plot adjusted proportion abnormal 
+plot(d_esr$total,d_esr$fit, pch = 16, ylim = c(0,0.6), col = "orange",
+     main = "Proportion abnormal ESR tests \nper General Practice", 
+     xlab = "Total number of ESR tests ordered", ylab = "Proportion abnormal ESR tests")
+abline(b=0, h=p_esr) #add in mean line
+lines(number.seq_esr,number.ll95_esr,lty = 2, col = "red")
+lines(number.seq_esr,number.ul95_esr,lty = 2, col = "red")
+lines(number.seq_esr,number.ll99.9_esr,lty = 2, col = "blue")
+lines(number.seq_esr,number.ul99.9_esr,lty = 2, col = "blue")
+legend(1000, 0.1, c("Adjusted proportions per practice"), pch = 16, col = "orange", cex = 0.8, bty = "n")
+legend(1000, 0.6, c("99.8% limit"), lty = 2, col = "blue", cex = 0.8, bty = "n")
+legend(1000, 0.57, c("95% limit"), lty = 2, col = "red", cex = 0.8, bty = "n")
+legend(1000, 0.54, c("Mean"), lty = 1, cex = 0.8, bty = "n")  
